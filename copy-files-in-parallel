@@ -6,98 +6,111 @@ import sys
 import uuid
 import multiprocessing
 
-DEFAULT_NUM_WORKERS = multiprocessing.cpu_count() * 2
+DEFAULT_NUM_WORKERS = multiprocessing.cpu_count()
 
 
-parser = argparse.ArgumentParser(description='Copy files in parallel.')
-parser.add_argument('source', help='source path')
-parser.add_argument('destination', help='destination path')
-parser.add_argument('-j', default=8, type=int, help='number of threads to use')
-parser.add_argument('-c', default=1000, type=int, help='number of files in one chunk')
+parser = argparse.ArgumentParser(description="Copy files in parallel.")
+parser.add_argument("source", help="source path")
+parser.add_argument("destination", help="destination path")
+parser.add_argument("-j", default=DEFAULT_NUM_WORKERS, type=int, help="number of threads to use")
+parser.add_argument(
+    "-i",
+    default=None,
+    type=str,
+    help="Same as ssh -i, specify which private key to use in ssh. Example: ~/.ssh/id_rsa. Default is None as not specified.",
+)
+parser.add_argument("-c", default=1000, type=int, help="number of files in one chunk")
 
-parser.add_argument('--resume', default=False, help='resume previous job (skip finding files)')
-parser.add_argument('--sudo', action='store_true', help='Add sudo to the rsync command')
-parser.add_argument('--dry', action='store_true', help='perform a trial run with no changes made')
-parser.add_argument('--lfs', action='store_true', help='use lustre utilities')
-parser.add_argument('--arcfour', action='store_true', help='use arcfour as compression algorithm')
-parser.add_argument('--tmp', default='/tmp/', help='path to store temporary data')
+parser.add_argument("--resume", default=False, help="resume previous job (skip finding files)")
+parser.add_argument("--sudo", action="store_true", help="Add sudo to the rsync command")
+parser.add_argument("--dry", action="store_true", help="perform a trial run with no changes made")
+parser.add_argument("--lfs", action="store_true", help="use lustre utilities")
+parser.add_argument("--arcfour", action="store_true", help="use arcfour as compression algorithm")
+parser.add_argument("--tmp", default="/tmp/", help="path to store temporary data")
 
 args = parser.parse_args()
 
 # check if GNU parallel is installed
-if not any(os.access(os.path.join(path, 'parallel'), os.X_OK) for path in os.environ["PATH"].split(os.pathsep)):
-    raise Exception('GNU parallel is not installed.')
+if not any(os.access(os.path.join(path, "parallel"), os.X_OK) for path in os.environ["PATH"].split(os.pathsep)):
+    raise Exception("GNU parallel is not installed.")
 
 # remove trailing slashes
-source = args.source.rstrip('/')
-destination = args.destination.rstrip('/')
+source = args.source.rstrip("/")
+destination = args.destination.rstrip("/")
 
 # prepare find exe
 if args.lfs:
-    find = 'lfs find'
+    find = "lfs find"
 else:
-    find = 'find'
+    find = "find"
 
 if args.resume:
     # prepare files/directories
     tmp_dir = os.path.join(args.resume)
     if not os.path.isdir(tmp_dir):
-        sys.exit('Error: Can not find jobs tmp directory.')
+        sys.exit("Error: Can not find jobs tmp directory.")
 
-    files_file = os.path.join(tmp_dir, 'files')
-    jobs_file = os.path.join(tmp_dir, 'jobs')
+    files_file = os.path.join(tmp_dir, "files")
+    jobs_file = os.path.join(tmp_dir, "jobs")
 
 else:
     # prepare files/directories
-    tmp_dir = os.path.join(args.tmp, 'copy-files-in-parallel', str(uuid.uuid4()))
+    tmp_dir = os.path.join(args.tmp, "copy-files-in-parallel", str(uuid.uuid4()))
     os.makedirs(tmp_dir)
 
-    files_file = os.path.join(tmp_dir, 'files')
-    jobs_file = os.path.join(tmp_dir, 'jobs')
+    files_file = os.path.join(tmp_dir, "files")
+    jobs_file = os.path.join(tmp_dir, "jobs")
 
     # find files
-    if ':' in source:
+    if ":" in source:
         # Hacky, but it works. If source is a remote machine (so it's
         # given with user@machine:/path/to/dir) we just split it at the ":"
         # This way we can use both parts of the string with the remote find
         # command.
-        source_um, source_path = source.split(':')
+        source_um, source_path = source.split(":")
         subprocess.call('ssh %s "cd %s; %s . -type f" > %s' % (source_um, source_path, find, files_file), shell=True)
     else:
         # Source is a local directory.
-        subprocess.call('%s . -type f > %s' % (find, files_file), shell=True, cwd=source)
+        subprocess.call("%s . -type f > %s" % (find, files_file), shell=True, cwd=source)
 
     # split the files file in chunks of 1000
-    chunk_file = os.path.join(tmp_dir, 'chunk')
-    subprocess.call('split -l %i -d -a 8 %s %s' % (args.c, files_file, chunk_file), shell=True)
+    chunk_file = os.path.join(tmp_dir, "chunk")
+    subprocess.call("split -l %i -d -a 8 %s %s" % (args.c, files_file, chunk_file), shell=True)
 
     # create a file containing all the copy jobs to perform
-    jobs_file_handler = open(jobs_file, 'w')
+    jobs_file_handler = open(jobs_file, "w")
     for filename in sorted(os.listdir(tmp_dir)):
-        if filename.startswith('chunk'):
+        if filename.startswith("chunk"):
             chunk_file = os.path.join(tmp_dir, filename)
-            chunk_num = filename.split('chunk')[1]
-            log_file = os.path.join(tmp_dir, 'log' + chunk_num)
+            chunk_num = filename.split("chunk")[1]
+            log_file = os.path.join(tmp_dir, "log" + chunk_num)
 
-            job = 'rsync -aH --no-l'
+            job = "rsync -aH --no-l"
             if args.sudo:
-                job = 'sudo ' + job
-            if args.arcfour:
-                job += ' -e \'ssh -c arcfour\''
-            job += ' --files-from=%s --log-file=%s %s %s\n' % (chunk_file, log_file, source, destination)
+                job = "sudo " + job
+            # SSH options
+            if args.i is not None or args.arcfour:
+                ssh_opt = ""
+                if args.i is not None:
+                    ssh_opt += f" -i {args.i} "
+                if args.arcfour:
+                    ssh_opt += " -c arcfour "
+                job += f" -e 'ssh {ssh_opt}'"
+
+            job += " --files-from=%s --log-file=%s %s %s\n" % (chunk_file, log_file, source, destination)
 
             jobs_file_handler.write(job)
 
     jobs_file_handler.close()
 
 try:
-    n_files = subprocess.check_output('wc -l %s' % files_file, shell=True).split()[0]
-    n_jobs = subprocess.check_output('wc -l %s' % jobs_file, shell=True).split()[0]
+    n_files = subprocess.check_output("wc -l %s" % files_file, shell=True).split()[0]
+    n_jobs = subprocess.check_output("wc -l %s" % jobs_file, shell=True).split()[0]
 
-    print(f'Copying {n_files} files using {n_jobs} jobs!')
-    print('tmp_dir is', tmp_dir)
+    print(f"Copying {n_files} files using {n_jobs} jobs!")
+    print("tmp_dir is", tmp_dir)
 except AttributeError:
     pass
 
 # run parallel with the jobs file
-subprocess.call('cat %s | parallel -P%i --eta' % (jobs_file, args.j), shell=True)
+subprocess.call("cat %s | parallel -P%i --eta" % (jobs_file, args.j), shell=True)
