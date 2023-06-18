@@ -5,8 +5,9 @@ import subprocess
 import sys
 import uuid
 import multiprocessing
+import pathlib
 
-DEFAULT_NUM_WORKERS = multiprocessing.cpu_count()
+DEFAULT_NUM_WORKERS = int(multiprocessing.cpu_count()*1.3)
 
 
 parser = argparse.ArgumentParser(description="Copy files in parallel.")
@@ -21,12 +22,13 @@ parser.add_argument(
 )
 parser.add_argument("-c", default=1000, type=int, help="number of files in one chunk")
 
-parser.add_argument("--resume", default=False, help="resume previous job (skip finding files)")
+parser.add_argument("--resume", default=False, help="resume previous job (skip finding files), pass in the ")
 parser.add_argument("--sudo", action="store_true", help="Add sudo to the rsync command")
 parser.add_argument("--dry", action="store_true", help="perform a trial run with no changes made")
 parser.add_argument("--lfs", action="store_true", help="use lustre utilities")
 parser.add_argument("--arcfour", action="store_true", help="use arcfour as compression algorithm")
 parser.add_argument("--tmp", default="/tmp/", help="path to store temporary data")
+parser.add_argument("--filter", default="*", help="The file matcher to filter which files to copy")
 
 args = parser.parse_args()
 
@@ -44,6 +46,7 @@ if args.lfs:
 else:
     find = "find"
 
+
 if args.resume:
     # prepare files/directories
     tmp_dir = os.path.join(args.resume)
@@ -55,31 +58,33 @@ if args.resume:
 
 else:
     # prepare files/directories
-    tmp_dir = os.path.join(args.tmp, "copy-files-in-parallel", str(uuid.uuid4()))
-    os.makedirs(tmp_dir)
+    tmp_dir = pathlib.Path(args.tmp)/ "copy-files-in-parallel-cache"/ str(uuid.uuid4())
+    tmp_dir.mkdir(parents=True)
 
     files_file = os.path.join(tmp_dir, "files")
     jobs_file = os.path.join(tmp_dir, "jobs")
 
     # find files
+    find_cmd = f'{find} . -name \\"{args.filter}\\" -type f'
     if ":" in source:
         # Hacky, but it works. If source is a remote machine (so it's
         # given with user@machine:/path/to/dir) we just split it at the ":"
         # This way we can use both parts of the string with the remote find
         # command.
         source_um, source_path = source.split(":")
-        subprocess.call('ssh %s "cd %s; %s . -type f" > %s' % (source_um, source_path, find, files_file), shell=True)
+        subprocess.call(f'ssh {source_um} "cd {source_path}; {find_cmd}" > {files_file}', shell=True)
     else:
         # Source is a local directory.
-        subprocess.call("%s . -type f > %s" % (find, files_file), shell=True, cwd=source)
+        subprocess.call(f'{find_cmd} > {files_file}', shell=True, cwd=source)
 
     # split the files file in chunks of 1000
     chunk_file = os.path.join(tmp_dir, "chunk")
-    subprocess.call("split -l %i -d -a 8 %s %s" % (args.c, files_file, chunk_file), shell=True)
+    subprocess.call(f"split -l {args.c} -d -a 8 {files_file} {chunk_file}", shell=True)
 
     # create a file containing all the copy jobs to perform
     jobs_file_handler = open(jobs_file, "w")
-    for filename in sorted(os.listdir(tmp_dir)):
+    chunk_files=sorted(os.listdir(tmp_dir))
+    for filename in chunk_files:
         if filename.startswith("chunk"):
             chunk_file = os.path.join(tmp_dir, filename)
             chunk_num = filename.split("chunk")[1]
@@ -97,20 +102,20 @@ else:
                     ssh_opt += " -c arcfour "
                 job += f" -e 'ssh {ssh_opt}'"
 
-            job += " --files-from=%s --log-file=%s %s %s\n" % (chunk_file, log_file, source, destination)
+            job += f" --files-from={chunk_file} --log-file={log_file} {source} {destination}\n"
 
             jobs_file_handler.write(job)
 
     jobs_file_handler.close()
 
-try:
-    n_files = subprocess.check_output("wc -l %s" % files_file, shell=True).split()[0]
-    n_jobs = subprocess.check_output("wc -l %s" % jobs_file, shell=True).split()[0]
+n_files = int(subprocess.check_output(f"wc -l {files_file}", shell=True).split()[0])
+n_jobs = int(subprocess.check_output(f"wc -l {jobs_file}" , shell=True).split()[0])
 
-    print(f"Copying {n_files} files using {n_jobs} jobs!")
-    print("tmp_dir is", tmp_dir)
-except AttributeError:
-    pass
+print(f"Copying {n_files} files using {n_jobs} jobs! {len(chunk_files)} chunks\n")
+print(f'To resume this session, add: --resume {tmp_dir}\n\n\n')
+
+parallel_log=tmp_dir/'parallel.log'
+print(f'Parallel log file: {parallel_log.absolute()}\n')
 
 # run parallel with the jobs file
-subprocess.call("cat %s | parallel -P%i --eta" % (jobs_file, args.j), shell=True)
+subprocess.call(f"cat {jobs_file} | parallel -P{args.j} --bar --progress --joblog {parallel_log.absolute()}" , shell=True)
