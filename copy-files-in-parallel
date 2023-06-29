@@ -7,7 +7,7 @@ import uuid
 import multiprocessing
 import pathlib
 
-DEFAULT_NUM_WORKERS = min(multiprocessing.cpu_count(), 30)
+DEFAULT_NUM_WORKERS = min(multiprocessing.cpu_count(), 10)
 
 
 def parse_arguments():
@@ -15,7 +15,7 @@ def parse_arguments():
     parser.add_argument("source", help="source path")
     parser.add_argument("destination", help="destination path")
     parser.add_argument(
-        "-j", default=DEFAULT_NUM_WORKERS, type=int, help="number of threads to use"
+        "-j", default=10, type=int, help="number of threads to use, default to max of 10 workers. More workers may result in firewall to block connection."
     )
     parser.add_argument(
         "-i",
