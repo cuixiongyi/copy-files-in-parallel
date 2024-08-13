@@ -1,3 +1,9 @@
+# To install
+wget https://raw.githubusercontent.com/cuixiongyi/copy-files-in-parallel/master/copy-files-in-parallel
+chmod +x copy-files-in-parallel
+sudo mv copy-files-in-parallel /usr/local/bin/
+
+
 copy-files-in-parallel
 ======================
 
