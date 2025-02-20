@@ -55,7 +55,18 @@ def parse_arguments():
 
     args = parser.parse_args()
     return args
-
+def generate_find_cmd(filter_pattern: str) -> str:
+    # Get the user's shell from the environment variable
+    shell = os.environ.get('SHELL', '')
+    
+    # Check if zsh is part of the shell path
+    if 'zsh' in shell:
+        # For zsh, use single quotes around the pattern
+        find_cmd = f'find . -name \'{filter_pattern}\' -type f'
+    else:
+        # For bash or other shells, use the original escaped double quotes
+        find_cmd = f'find . -name \\"{filter_pattern}\\" -type f'
+    return find_cmd
 
 def find_files_create_job(args, source, destination, files_file, tmp_dir, jobs_file):
     # prepare find exe
@@ -65,19 +76,20 @@ def find_files_create_job(args, source, destination, files_file, tmp_dir, jobs_f
         find = "find"
 
     # find files
-    find_cmd = f'{find} . -name \\"{args.filter}\\" -type f'
+    find_cmd = generate_find_cmd(args.filter)
     if ":" in source:
         # Hacky, but it works. If source is a remote machine (so it's
         # given with user@machine:/path/to/dir) we just split it at the ":"
         # This way we can use both parts of the string with the remote find
         # command.
         source_um, source_path = source.split(":")
-        subprocess.call(
-            f'ssh {source_um} "cd {source_path}; {find_cmd}" > {files_file}', shell=True
-        )
+        cmd = f'ssh {source_um} "cd {source_path}; {find_cmd}" > {files_file}'
+        subprocess.call(cmd, shell=True)
     else:
         # Source is a local directory.
-        subprocess.call(f"{find_cmd} > {files_file}", shell=True, cwd=source)
+        cmd = f"{find_cmd} > {files_file}"
+    print(f"Find files in dir {source}, call: ", cmd)
+    subprocess.call(cmd, shell=True, cwd=source)
 
     # split the files file in chunks of 1000
     chunk_file = os.path.join(tmp_dir, "chunk")
