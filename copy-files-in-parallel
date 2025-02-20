@@ -44,7 +44,7 @@ def parse_arguments():
     )
     parser.add_argument("--tmp", default="/tmp/", help="path to store temporary data")
     parser.add_argument(
-        "--filter", default="*", help="The file matcher to filter which files to copy"
+        "--filter", default="-path '*'", help="The file matcher for find command. It will be appended to find command like, `find target_dir/ -type f {filter}`"
     )
     parser.add_argument(
         "--test-ssh",
@@ -62,10 +62,10 @@ def generate_find_cmd(filter_pattern: str) -> str:
     # Check if zsh is part of the shell path
     if 'zsh' in shell:
         # For zsh, use single quotes around the pattern
-        find_cmd = f'find . -name \'{filter_pattern}\' -type f'
+        find_cmd = f'find . -type f {filter_pattern}'
     else:
         # For bash or other shells, use the original escaped double quotes
-        find_cmd = f'find . -name \\"{filter_pattern}\\" -type f'
+        find_cmd = f'find . -type f {filter_pattern}'
     return find_cmd
 
 def find_files_create_job(args, source, destination, files_file, tmp_dir, jobs_file):
