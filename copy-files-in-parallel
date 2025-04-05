@@ -44,7 +44,7 @@ def parse_arguments():
     )
     parser.add_argument("--tmp", default="/tmp/", help="path to store temporary data")
     parser.add_argument(
-        "--filter", default="-path ''", help="The file matcher for find command. It will be appended to find command like, `find target_dir/ -type f {filter}`"
+        "--filter", default="-path '*'", help="The file matcher for find command. It will be appended to find command like, `find target_dir/ -type f {filter}`"
     )
     parser.add_argument(
         "--test-ssh",
